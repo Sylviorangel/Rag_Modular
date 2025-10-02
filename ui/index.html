@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>RAG Modular — UI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root{
+        --bg:#fafafa; --card:#fff; --muted:#666; --border:#e5e7eb; --accent:#2563eb;
+        --shadow:0 2px 6px rgba(0,0,0,.06);
+      }
+      *{box-sizing:border-box}
+      body{
+        font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
+        background:var(--bg); color:#111; margin:0; padding:24px;
+      }
+      .container{max-width:960px;margin:0 auto}
+      h1{margin:0 0 20px 0; font-size:28px}
+      .card{
+        background:var(--card); border:1px solid var(--border); border-radius:14px;
+        box-shadow:var(--shadow); padding:18px; margin-bottom:16px;
+      }
+      .muted{color:var(--muted)}
+      .row{display:flex; gap:12px; align-items:center; flex-wrap:wrap}
+      label{font-size:14px; color:#333}
+      input[type="file"], input[type="text"], input[type="number"], textarea{
+        width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:#fff;
+      }
+      input[type="number"]{max-width:120px}
+      .btn{
+        border:1px solid var(--border); background:#fff; border-radius:10px; padding:10px 14px;
+        cursor:pointer; transition:.15s; font-weight:600;
+      }
+      .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+      .btn:disabled{opacity:.6; cursor:not-allowed}
+      .pill{display:inline-block; padding:3px 10px; border-radius:999px; background:#eef2ff; margin:4px 6px 0 0; font-size:12px}
+      .answer{white-space:pre-wrap; line-height:1.5}
+      details.sources{margin-top:10px; border-top:1px solid var(--border); padding-top:10px}
+      code.inline{background:#f6f8fa; padding:2px 6px; border-radius:6px}
+      .status{font-size:13px}
+      .error{color:#b91c1c; font-weight:600}
+      .ok{color:#166534; font-weight:600}
+      .hr{height:1px;background:var(--border);margin:12px 0}
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>RAG Modular — UI</h1>
+
+      <!-- 1) INGESTÃO -->
+      <div class="card" id="card-ingest">
+        <h3 style="margin-top:0">1) Ingestão</h3>
+        <p class="muted">Envie <code class="inline">.txt</code>, <code class="inline">.md</code>, <code class="inline">.pdf</code>, <code class="inline">.docx</code></p>
+        <div class="row">
+          <!-- aceita apenas formatos suportados -->
+          <input id="files" type="file" multiple accept=".txt,.md,.pdf,.docx" />
+          <button id="btnIngest" class="btn" onclick="ingest()">Ingerir</button>
+          <button id="btnCorpus" class="btn" onclick="listCorpus()">Ver Corpus</button>
+        </div>
+        <div class="status" id="ingestStatus" style="margin-top:8px"></div>
+        <div class="status" id="corpusStatus" style="margin-top:6px"></div>
+      </div>
+
+      <!-- 2) PERGUNTAR -->
+      <div class="card" id="card-ask">
+        <h3 style="margin-top:0">2) Perguntar</h3>
+
+        <label for="system">Prompt do Sistema (opcional)</label>
+        <textarea id="system" rows="3" placeholder="Responda as perguntas"></textarea>
+
+        <div class="hr"></div>
+
+        <label for="question">Pergunta</label>
+        <input id="question" type="text" placeholder="Sua pergunta..." />
+
+        <div class="row" style="margin-top:8px">
+          <div class="row" style="gap:8px">
+            <label for="topk" style="margin-right:0">Top-K</label>
+            <input id="topk" type="number" value="6" min="1" max="20" />
+          </div>
+          <label style="display:flex;align-items:center;gap:8px">
+            <input id="stream" type="checkbox" />
+            <span>Streaming</span>
+          </label>
+          <button id="btnAsk" class="btn primary" onclick="ask()">Perguntar</button>
+        </div>
+
+        <div id="info" class="muted" style="margin-top:6px"></div>
+        <div id="answer" class="answer" style="margin-top:12px"></div>
+        <details id="sourcesWrap" class="sources" style="display:none">
+          <summary><strong>Fontes</strong></summary>
+          <div id="sources" style="margin-top:6px"></div>
+        </details>
+      </div>
+
+      <!-- 3) MANUTENÇÃO -->
+      <div class="card" id="card-maint">
+        <h3 style="margin-top:0">3) Manutenção</h3>
+        <div class="row">
+          <button id="btnClear" class="btn" onclick="clearIndex()">Limpar Corpus</button>
+          <span id="clearStatus" class="status"></span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const byId = (id) => document.getElementById(id);
+
+      function setBusy(btn, busy, busyText) {
+        if (!btn) return;
+        if (busy) {
+          btn.dataset._label = btn.textContent;
+          btn.textContent = busyText || "Aguarde…";
+          btn.disabled = true;
+        } else {
+          btn.textContent = btn.dataset._label || btn.textContent;
+          btn.disabled = false;
+        }
+      }
+
+      // ---------- Ingest ----------
+      async function ingest(){
+        const filesEl = byId('files');
+        const btn = byId('btnIngest');
+        const status = byId('ingestStatus');
+        status.textContent = '';
+        if (!filesEl.files.length){
+          status.innerHTML = '<span class="error">Selecione ao menos um arquivo.</span>';
+          return;
+        }
+
+        const fd = new FormData();
+        for(const f of filesEl.files){ fd.append('files', f); }
+
+        setBusy(btn, true, 'Ingerindo…');
+        try {
+          const res = await fetch('/ingest', { method: 'POST', body: fd });
+          const text = await res.text();
+          let json = {};
+          try { json = JSON.parse(text); } catch { throw new Error(text); }
+          const skipped = json.skipped && json.skipped.length
+            ? ` — ignorados: ${json.skipped.map(s => s.filename).join(', ')}`
+            : '';
+          status.innerHTML = '<span class="ok">OK</span> ' +
+            `ingested_docs=${json.ingested_docs}, ingested_chunks=${json.ingested_chunks}${skipped}`;
+        } catch (e){
+          status.innerHTML = '<span class="error">Erro na ingestão</span> — ' + (e?.message || e);
+        } finally {
+          setBusy(btn, false);
+        }
+      }
+
+      async function listCorpus(){
+        const out = byId('corpusStatus');
+        out.textContent = 'Carregando corpus…';
+        try{
+          const res = await fetch('/corpus');
+          const json = await res.json();
+          const items = (json.sources || []).map(s => `[${s.chunks}] ${s.source}`).join(' • ');
+          out.innerHTML = `<span class="ok">Corpus</span> (${json.total_chunks} chunks): ${items || 'vazio'}`;
+        }catch(e){
+          out.innerHTML = '<span class="error">Falha ao listar corpus</span> — ' + (e?.message || e);
+        }
+      }
+
+      // ---------- Perguntar ----------
+      async function ask(){
+        const btn = byId('btnAsk');
+        const info = byId('info');
+        const ansEl = byId('answer');
+        const sourcesWrap = byId('sourcesWrap');
+        const sourcesEl = byId('sources');
+
+        const system = byId('system').value;
+        const q = byId('question').value.trim();
+        const topk = byId('topk').value;
+        const stream = byId('stream').checked;
+
+        sourcesWrap.style.display = 'none';
+        sourcesEl.innerHTML = '';
+        ansEl.textContent = '';
+        info.textContent = '';
+
+        if(!q){
+          info.innerHTML = '<span class="error">Digite uma pergunta.</span>';
+          return;
+        }
+
+        const fd = new FormData();
+        fd.append('question', q);
+        fd.append('system_prompt', system || '');
+        fd.append('top_k', topk);
+        fd.append('stream', stream ? 'true' : 'false');
+
+        setBusy(btn, true, stream ? 'Transmitindo…' : 'Perguntando…');
+
+        try {
+          if (stream){
+            info.textContent = 'Streaming ativo — as fontes aparecerão no final.';
+            const res = await fetch('/query', { method: 'POST', body: fd });
+            if(!res.ok){ throw new Error('HTTP '+res.status); }
+            const reader = res.body.getReader();
+            const dec = new TextDecoder();
+            let out = '';
+            while(true){
+              const {value, done} = await reader.read();
+              if(done) break;
+              out += dec.decode(value);
+              ansEl.textContent = out;
+            }
+            // chamada curta para pegar as fontes
+            const fd2 = new FormData();
+            fd2.append('question', q);
+            fd2.append('system_prompt', system || '');
+            fd2.append('top_k', topk);
+            fd2.append('stream', 'false');
+            const res2 = await fetch('/query', { method:'POST', body: fd2 });
+            if(res2.ok){
+              const json2 = await res2.json();
+              renderSources(json2.sources, sourcesWrap, sourcesEl);
+            }
+          } else {
+            const res = await fetch('/query', { method: 'POST', body: fd });
+            if(!res.ok){
+              const t = await res.text();
+              info.innerHTML = '<span class="error">Erro na consulta</span> — ' + t.slice(0,200);
+              return;
+            }
+            const json = await res.json();
+            ansEl.textContent = json.answer || '';
+            renderSources(json.sources, sourcesWrap, sourcesEl);
+          }
+        } catch (e){
+          info.innerHTML = '<span class="error">Falha</span> — ' + (e?.message || e);
+        } finally {
+          setBusy(btn, false);
+        }
+      }
+
+      function renderSources(sources, wrap, el){
+        if(!Array.isArray(sources) || sources.length === 0){
+          wrap.style.display = 'none';
+          return;
+        }
+        const items = sources.map((s, i) => {
+          const label = s.source || s.doc_id || s.chunk_id || ('Fonte '+(i+1));
+          return `<div><span class="pill">[${i+1}]</span> ${escapeHtml(label)}</div>`;
+        }).join('');
+        el.innerHTML = items;
+        wrap.style.display = 'block';
+      }
+
+      // ---------- Manutenção ----------
+      async function clearIndex(){
+        const btn = byId('btnClear');
+        const out = byId('clearStatus');
+        out.textContent = '';
+        setBusy(btn, true, 'Limpando…');
+        try{
+          const res = await fetch('/clear', { method: 'POST' });
+          const json = await res.json();
+          out.innerHTML = '<span class="ok">OK</span> ' + JSON.stringify(json);
+        }catch(e){
+          out.innerHTML = '<span class="error">Falha</span> — ' + (e?.message || e);
+        }finally{
+          setBusy(btn, false);
+        }
+      }
+
+      // ---------- Utils ----------
+      function escapeHtml(s){
+        return String(s)
+          .replace(/&/g,'&amp;')
+          .replace(/</g,'&lt;')
+          .replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;')
+          .replace(/'/g,'&#039;');
+      }
+    </script>
+  </body>
+</html>
