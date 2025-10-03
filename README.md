@@ -1,4 +1,4 @@
-# RAG_Modular Teste
+# RAG Modular
 
 ## Requisitos
 - Python 3.11+
