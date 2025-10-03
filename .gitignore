@@ -5,3 +5,4 @@ __pycache__/
 .chroma/
 chromadb/
 *.log
+.DS_Store
