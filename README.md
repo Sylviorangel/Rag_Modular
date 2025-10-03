@@ -1,4 +1,4 @@
-# RAG_Modular 01
+# RAG_Modular
 
 ## Requisitos
 - Python 3.11+
